@@ -7,15 +7,24 @@ const router = express.Router();
 
 // Register
 router.post('/register', async (req, res) => {
-  const { username, password } = req.body;
+  const { username, email, password } = req.body;
+  if (!username || !email || !password) {
+    return res.status(400).json({ error: 'All fields are required' });
+  }
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    return res.status(400).json({ error: 'Invalid email format' });
+  }
+  if (password.length < 6) {
+    return res.status(400).json({ error: 'Password must be at least 6 characters' });
+  }
   try {
     const hashedPassword = await bcrypt.hash(password, 10);
     db.run(
-      'INSERT INTO users (username, password) VALUES (?, ?)',
-      [username, hashedPassword],
+      'INSERT INTO users (username, email, password) VALUES (?, ?, ?)',
+      [username, email, hashedPassword],
       function (err) {
         if (err) {
-          return res.status(400).json({ error: 'Username already exists' });
+          return res.status(400).json({ error: 'Username or email already exists' });
         }
         res.status(201).json({ message: 'User registered successfully' });
       }
