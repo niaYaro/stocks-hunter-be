@@ -15,10 +15,12 @@ const db = new sqlite3.Database(path.join(__dirname, '../../database.db'), (err)
       )
     `);
     db.run(`
-      CREATE TABLE IF NOT EXISTS stock_cache (
-        symbol TEXT PRIMARY KEY,
-        data TEXT NOT NULL,
-        timestamp INTEGER NOT NULL
+      CREATE TABLE IF NOT EXISTS user_stocks (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL UNIQUE,
+        stocks TEXT NOT NULL,
+        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+        UNIQUE (user_id, stocks)
       )
     `);
   }

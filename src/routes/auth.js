@@ -67,7 +67,7 @@ router.post('/login', async (req, res) => {
       return res.status(400).json({ error: 'Invalid credentials' });
     }
     const token = jwt.sign({ id: user.id, username }, process.env.JWT_SECRET, {
-      expiresIn: '1h',
+      expiresIn: '24h',
     });
     res.json({ token });
   } catch (error) {
@@ -75,16 +75,5 @@ router.post('/login', async (req, res) => {
     res.status(500).json({ error: 'Server error', details: error.message });
   }
 });
-
-// Debug endpoint to view users
-// router.get('/users', authMiddleware, (req, res) => {
-//   db.all('SELECT id, username, email FROM users', [], (err, rows) => {
-//     if (err) {
-//       console.error('Users fetch error:', err.message);
-//       return res.status(500).json({ error: 'Error fetching users' });
-//     }
-//     res.json(rows);
-//   });
-// });
 
 module.exports = router;
