@@ -1,6 +1,6 @@
 const express = require('express');
 const yfinance = require('yahoo-finance2').default;
-const { RSI, MACD, SMA, BollingerBands } = require('technicalindicators');
+const { RSI, MACD, BollingerBands } = require('technicalindicators');
 const authMiddleware = require('../middleware/auth');
 const db = require('../db/database');
 
@@ -11,24 +11,21 @@ function formatDate(date) {
     return `${year}-${month}-${day}`;
 }
 
-const router = express.Router();
-
-router.get('/stock/:ticker', authMiddleware, async (req, res) => {
+const getStockData = async (params, query, res, dateFunction, yfLib, RSIData, MACDData, BBData) => {
     try {
-        const { ticker } = req.params;
-        const { rsiPeriod = 14, macdFast = 12, macdSlow = 26, macdSignal = 9, bbPeriod = 20, bbStdDev = 2, } = req.query;
+        const { ticker } = params;
+        const { rsiPeriod = 14, macdFast = 12, macdSlow = 26, macdSignal = 9, bbPeriod = 20, bbStdDev = 2, } = query;
         const today = new Date();
-        const todayFormatted = formatDate(today);
+        const todayFormatted = dateFunction(today);
         const oneYearAgo = new Date();
         oneYearAgo.setFullYear(today.getFullYear() - 1);
-        const oneYearAgoFormatted = formatDate(oneYearAgo);
+        const oneYearAgoFormatted = dateFunction(oneYearAgo);
 
-        const summary = await yfinance.quoteSummary(ticker);
-        const chartData = await yfinance.chart(ticker, {
+        const summary = await yfLib.quoteSummary(ticker);
+        const chartData = await yfLib.chart(ticker, {
             period1: oneYearAgoFormatted,
             period2: todayFormatted
         });
-
 
         const price = summary.price || [];
 
@@ -52,54 +49,62 @@ router.get('/stock/:ticker', authMiddleware, async (req, res) => {
             return res.status(400).json({ error: `Недостатньо даних для RSI (${rsiPeriod} періодів)` });
         }
 
-        // Обчислюємо RSI
-        const rsi = new RSI({ period: Number(rsiPeriod), values: closePrices });
+        const rsi = new RSIData({ period: Number(rsiPeriod), values: closePrices });
         const rsiValues = rsi.getResult();
 
-        // Обчислюємо MACD
-        const macd = new MACD({
+        const macd = new MACDData({
             values: closePrices,
             fastPeriod: Number(macdFast),
             slowPeriod: Number(macdSlow),
             signalPeriod: Number(macdSignal),
-            SimpleMAOscillator: false, // Використовуємо EMA, а не SMA
-            SimpleMASignal: false, // Використовуємо EMA для сигнальної лінії
+            SimpleMAOscillator: false,
+            SimpleMASignal: false,
         });
         const macdValues = macd.getResult();
 
-        // Обчислюємо Bollinger Bands
-        const bb = new BollingerBands({
+        const bb = new BBData({
             period: Number(bbPeriod),
             stdDev: Number(bbStdDev),
             values: closePrices,
         });
         const bbValues = bb.getResult();
-        res.json(
-            {
-                general: {
-                    ticker: price.symbol,
-                    fullName: price.longName,
-                    type: price.quoteType,
-                    price: price.regularMarketPrice,
-                },
-                technicalIndicators: {
-                    rsi: rsiValues[rsiValues.length - 1],
-                    macd: macdValues.slice(macdValues.length - 14, macdValues.length),
-                    crossPossition: macdValues[macdValues.length - 1].histogram > 0 ? "Up" : "Down",
-                    bbValues: bbValues[bbValues.length - 1],
-                }
-                // summary: summary,
-            }
-        );
 
-        res.json(result);
+        const stockData = {
+            general: {
+                ticker: price.symbol,
+                fullName: price.longName,
+                type: price.quoteType,
+                price: price.regularMarketPrice,
+            },
+            technicalIndicators: {
+                rsi: rsiValues[rsiValues.length - 1],
+                macd: macdValues.slice(macdValues.length - 14, macdValues.length),
+                crossPossition: macdValues[macdValues.length - 1].histogram > 0 ? "Up" : "Down",
+                bbValues: bbValues[bbValues.length - 1],
+            }
+        };
+
+        return stockData; // Return the stock data instead of sending response directly
     } catch (error) {
-        res.status(500).json({ error: `Error fetching stock data ${error}` });
+        console.error('Error fetching stock data:', error);
+        throw error; // Throw error to be handled by the caller
+    }
+}
+
+const router = express.Router();
+
+// Ендпоінт для пошуку акції
+router.get('/stock/:ticker', authMiddleware, async (req, res) => {
+    try {
+        const stockData = await getStockData(req.params, req.query, res, formatDate, yfinance, RSI, MACD, BollingerBands);
+        res.json(stockData);
+    } catch (error) {
+        res.status(500).json({ error: 'Internal server error' });
     }
 });
 
 // Ендпоінт для додавання акції до списку користувача
-router.post('/stock', authMiddleware, (req, res) => {
+router.post('/stock', authMiddleware, async (req, res) => {
     const { symbol } = req.body;
     const userId = req.user.id;
 
@@ -107,36 +112,50 @@ router.post('/stock', authMiddleware, (req, res) => {
         return res.status(400).json({ error: 'Тікер акції обов’язковий і має бути рядком' });
     }
 
-    // Отримуємо поточний список акцій
-    db.get('SELECT stocks FROM user_stocks WHERE user_id = ?', [userId], (err, row) => {
-        if (err) {
-            console.error('Помилка отримання списку акцій:', err.message);
-            return res.status(500).json({ error: 'Помилка сервера' });
-        }
+    try {
+        const stockData = await getStockData(
+            { ticker: symbol },
+            req.query,
+            res,
+            formatDate,
+            yfinance,
+            RSI,
+            MACD,
+            BollingerBands
+        );
 
-        let stocks = row ? JSON.parse(row.stocks) : [];
-        const upperSymbol = symbol.toUpperCase();
-
-        if (stocks.includes(upperSymbol)) {
-            return res.status(400).json({ error: 'Акція вже додана' });
-        }
-
-        stocks.push(upperSymbol);
-
-        // Оновлюємо або додаємо запис
-        const query = `
-            INSERT INTO user_stocks (user_id, stocks)
-            VALUES (?, ?)
-            ON CONFLICT(user_id) DO UPDATE SET stocks = excluded.stocks
-        `;
-        db.run(query, [userId, JSON.stringify(stocks)], function (err) {
+        db.get('SELECT stocks FROM user_stocks WHERE user_id = ?', [userId], (err, row) => {
             if (err) {
-                console.error('Помилка додавання акції:', err.message);
-                return res.status(500).json({ error: `Помилка при додаванні акції --- ${err.message}` });
+                console.error('Помилка отримання списку акцій:', err.message);
+                return res.status(500).json({ error: 'Помилка сервера' });
             }
-            res.json({ message: `Акція ${symbol} додана до списку`, stocks });
+
+            let stocks = row ? JSON.parse(row.stocks) : [];
+            const upperSymbol = symbol.toUpperCase();
+
+            if (stocks.some(stock => stock?.general?.ticker.toUpperCase() === upperSymbol)) {
+                return res.status(400).json({ error: 'Акція вже додана' });
+            }
+
+            stocks.push(stockData);
+
+            const query = `
+                INSERT INTO user_stocks (user_id, stocks)
+                VALUES (?, ?)
+                ON CONFLICT(user_id) DO UPDATE SET stocks = excluded.stocks
+            `;
+            db.run(query, [userId, JSON.stringify(stocks)], function (err) {
+                if (err) {
+                    console.error('Помилка додавання акції:', err.message);
+                    return res.status(500).json({ error: `Помилка при додаванні акції --- ${err.message}` });
+                }
+                res.json({ message: `Акція ${symbol} додана до списку`, stocks });
+            });
         });
-    });
+    } catch (error) {
+        console.error('Error adding stock:', error);
+        res.status(500).json({ error: 'Internal server error' });
+    }
 });
 
 // Ендпоінт для отримання списку акцій користувача
@@ -153,7 +172,3 @@ router.get('/user/stocks', authMiddleware, (req, res) => {
 });
 
 module.exports = router;
-
-
-
-// {"username":"newuser123","email":"newuser123@example.com","password":"newpass123"}
