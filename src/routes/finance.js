@@ -126,8 +126,8 @@ router.post('/stock', authMiddleware, async (req, res) => {
 
         db.get('SELECT stocks FROM user_stocks WHERE user_id = ?', [userId], (err, row) => {
             if (err) {
-                console.error('Помилка отримання списку акцій:', err.message);
-                return res.status(500).json({ error: 'Помилка сервера' });
+                console.error('Error getting stock:', err.message);
+                return res.status(500).json({ error: 'Server error' });
             }
 
             let stocks = row ? JSON.parse(row.stocks) : [];
@@ -146,10 +146,10 @@ router.post('/stock', authMiddleware, async (req, res) => {
             `;
             db.run(query, [userId, JSON.stringify(stocks)], function (err) {
                 if (err) {
-                    console.error('Помилка додавання акції:', err.message);
-                    return res.status(500).json({ error: `Помилка при додаванні акції --- ${err.message}` });
+                    console.error('Error adding stock:', err.message);
+                    return res.status(500).json({ error: `Error adding stock --- ${err.message}` });
                 }
-                res.json({ message: `Акція ${symbol} додана до списку`, stocks });
+                res.json({ message: `${symbol} stock added to the list`, stocks });
             });
         });
     } catch (error) {
