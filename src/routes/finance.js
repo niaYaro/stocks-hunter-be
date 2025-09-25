@@ -30,7 +30,7 @@ const getStockData = async (params, query, res, dateFunction, yfLib, RSIData, MA
         const price = summary.price || [];
 
         if (!chartData.quotes || chartData.quotes.length === 0) {
-            return res.status(400).json({ error: 'Дані для тікера недоступні' });
+            return res.status(400).json({ error: 'Data for the ticker is not available' });
         }
 
         const closePrices = [];
@@ -46,7 +46,7 @@ const getStockData = async (params, query, res, dateFunction, yfLib, RSIData, MA
         }
 
         if (closePrices.length < Number(rsiPeriod)) {
-            return res.status(400).json({ error: `Недостатньо даних для RSI (${rsiPeriod} періодів)` });
+            return res.status(400).json({ error: `Not enough data for RSI (${rsiPeriod} periods)` });
         }
 
         const rsi = new RSIData({ period: Number(rsiPeriod), values: closePrices });
@@ -109,7 +109,7 @@ router.post('/stock', authMiddleware, async (req, res) => {
     const userId = req.user.id;
 
     if (!symbol || typeof symbol !== 'string') {
-        return res.status(400).json({ error: 'Тікер акції обов’язковий і має бути рядком' });
+        return res.status(400).json({ error: 'Stock ticker is required and must be a string' });
     }
 
     try {
@@ -134,7 +134,7 @@ router.post('/stock', authMiddleware, async (req, res) => {
             const upperSymbol = symbol.toUpperCase();
 
             if (stocks.some(stock => stock?.general?.ticker.toUpperCase() === upperSymbol)) {
-                return res.status(400).json({ error: 'Акція вже додана' });
+                return res.status(400).json({ error: 'Stock is already added' });
             }
 
             stocks.push(stockData);
@@ -158,13 +158,66 @@ router.post('/stock', authMiddleware, async (req, res) => {
     }
 });
 
+// Ендпоінт для видалення акції зі списку користувача
+router.delete('/stock', authMiddleware, async (req, res) => {
+    const { symbol } = req.body;
+    const userId = req.user.id;
+
+    if (!symbol || typeof symbol !== 'string') {
+        return res.status(400).json({ error: 'Stock ticker is required and must be a string' });
+    }
+
+    try {
+        db.get('SELECT stocks FROM user_stocks WHERE user_id = ?', [userId], (err, row) => {
+            if (err) {
+                console.error('Error getting stock:', err.message);
+                return res.status(500).json({ error: 'Server error' });
+            }
+
+            if (!row) {
+                return res.status(404).json({ error: 'No stocks found for this user' });
+            }
+
+            let stocks = JSON.parse(row.stocks);
+            const upperSymbol = symbol.toUpperCase();
+
+            // Перевіряємо, чи є акція в списку
+            const stockIndex = stocks.findIndex(stock => stock?.general?.ticker.toUpperCase() === upperSymbol);
+
+            if (stockIndex === -1) {
+                return res.status(404).json({ error: 'Stock not found in the list' });
+            }
+
+            // Видаляємо акцію зі списку
+            stocks.splice(stockIndex, 1);
+
+            // Оновлюємо список акцій у базі даних
+            const query = `
+                INSERT INTO user_stocks (user_id, stocks)
+                VALUES (?, ?)
+                ON CONFLICT(user_id) DO UPDATE SET stocks = excluded.stocks
+            `;
+            db.run(query, [userId, JSON.stringify(stocks)], function (err) {
+                if (err) {
+                    console.error('Error removing stock:', err.message);
+                    return res.status(500).json({ error: `Error removing stock --- ${err.message}` });
+                }
+                res.json({ message: `${symbol} stock removed from the list`, stocks });
+            });
+        });
+    } catch (error) {
+        console.error('Error removing stock:', error);
+        res.status(500).json({ error: 'Internal server error' });
+    }
+});
+
 // Ендпоінт для отримання списку акцій користувача
 router.get('/user/stocks', authMiddleware, (req, res) => {
     const userId = req.user.id;
     db.get('SELECT stocks FROM user_stocks WHERE user_id = ?', [userId], (err, row) => {
         if (err) {
-            console.error('Помилка отримання списку акцій:', err.message);
-            return res.status(500).json({ error: 'Помилка при отриманні списку акцій' });
+            console.error('Error fetching the list of stocks:', err.message);
+            return res.status(500).json({ error: 'Failed to fetch the list of stocks' });
         }
         const stocks = row ? JSON.parse(row.stocks) : [];
         res.json({ stocks });
